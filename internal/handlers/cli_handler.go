@@ -27,6 +27,8 @@ var metricsToGet = []string{
 	"NetworkBytesIn",
 	"NetworkBytesOut",
 	"EngineCPUUtilization",
+	"CPUUtilization",
+	"FreeableMemory",
 
 	"BytesUsedForCache",
 	"DatabaseMemoryUsagePercentage",

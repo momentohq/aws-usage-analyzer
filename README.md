@@ -20,4 +20,3 @@ AWS_PROFILE=my-profile AWS_REGION=us-west-2 ./dist/ec-usage-analyzer
 ```
 
 Will output a file named `results.csv` With raw data about your workloads needed for analysis.
-
