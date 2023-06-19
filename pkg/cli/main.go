@@ -23,7 +23,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	h := handlers.Handler{
+	h := &handlers.Handler{
 		Cw: cloudwatch.NewFromConfig(cfg),
 		Ec: elasticache.NewFromConfig(cfg),
 	}

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -21,78 +20,90 @@ type Handler struct {
 	Ec *elasticache.Client
 }
 
-var metricsToGet = []string{
-	"CurrConnections",
-	"NewConnections",
-	"NetworkBytesIn",
-	"NetworkBytesOut",
-	"EngineCPUUtilization",
-	"CPUUtilization",
-	"FreeableMemory",
+var metricsToGet = map[string][]string{
+	"Sum": {
+		"NetworkBytesIn",
+		"NetworkBytesOut",
 
-	"BytesUsedForCache",
-	"DatabaseMemoryUsagePercentage",
-	"CurrItems",
-	"KeysTracked",
-	"Evictions",
+		"GeoSpatialBasedCmds",
+		"EvalBasedCmds",
+		"GetTypeCmds",
+		"HashBasedCmds",
 
-	"CacheHitRate",
-	"DB0AverageTTL",
+		"JsonBasedCmds",
+		"KeyBasedCmds",
+		"ListBasedCmds",
+		"SetBasedCmds",
+		"SetTypeCmds",
+		"StringBasedCmds",
+		"PubSubBasedCmds",
+		"SortedSetBasedCmds",
+		"StreamBasedCmds",
+	},
+	"Average": {
+		"DB0AverageTTL",
 
-	"EvalBasedCmds",
-	"EvalBasedCmdsLatency",
-	"GeoSpatialBasedCmds",
-	"GeoSpatialBasedCmdsLatency",
-	"GetTypeCmds",
-	"GetTypeCmdsLatency",
-	"HashBasedCmds",
-	"HashBasedCmdsLatency",
-	"JsonBasedCmds",
-	"JsonBasedCmdsLatency",
-	"KeyBasedCmds",
-	"KeyBasedCmdsLatency",
-	"ListBasedCmds",
-	"ListBasedCmdsLatency",
-	"PubSubBasedCmds",
-	"PubSubBasedCmdsLatency",
-	"SetBasedCmds",
-	"SetBasedCmdsLatency",
-	"SetTypeCmds",
-	"SetTypeCmdsLatency",
-	"SortedSetBasedCmds",
-	"SortedSetBasedCmdsLatency",
-	"StringBasedCmds",
-	"StringBasedCmdsLatency",
-	"StreamBasedCmds",
-	"StreamBasedCmdsLatency",
+		"EvalBasedCmdsLatency",
+		"GeoSpatialBasedCmdsLatency",
+		"GetTypeCmdsLatency",
+		"HashBasedCmdsLatency",
+		"JsonBasedCmdsLatency",
+		"KeyBasedCmdsLatency",
+		"ListBasedCmdsLatency",
+		"PubSubBasedCmdsLatency",
+		"SetBasedCmdsLatency",
+		"SetTypeCmdsLatency",
+		"SortedSetBasedCmdsLatency",
+		"StringBasedCmdsLatency",
+		"StreamBasedCmdsLatency",
+	},
+	"Maximum": {
+		"CurrConnections",
+		"NewConnections",
+
+		"EngineCPUUtilization",
+		"CPUUtilization",
+		"FreeableMemory",
+
+		"BytesUsedForCache",
+		"DatabaseMemoryUsagePercentage",
+		"CurrItems",
+		"KeysTracked",
+		"Evictions",
+
+		"CacheHitRate",
+
+		"EvalBasedCmdsLatency",
+		"GeoSpatialBasedCmdsLatency",
+		"GetTypeCmdsLatency",
+		"HashBasedCmdsLatency",
+		"JsonBasedCmdsLatency",
+		"KeyBasedCmdsLatency",
+		"ListBasedCmdsLatency",
+		"PubSubBasedCmdsLatency",
+		"SetBasedCmdsLatency",
+		"SetTypeCmdsLatency",
+		"SortedSetBasedCmdsLatency",
+		"StringBasedCmdsLatency",
+		"StreamBasedCmdsLatency",
+	},
 }
 
 type MetricBlob struct {
-	Name string `json:"name"`
-	//Timestamps []time.Time `json:"timestamps"`
+	Name   string    `json:"name"`
 	Values []float64 `json:"values"`
 }
 
 type CacheNodeSummary struct {
-	ID      string       `json:"id"`
-	Metrics []MetricBlob `json:"metrics"`
-}
-
-type ClusterSummary struct {
-	ID            string             `json:"id"`
-	NodeSummary   []CacheNodeSummary `json:"node_summary"`
-	Engine        string             `json:"engine"`
-	CacheNodeType string             `json:"cache_node_type"`
-}
-
-type ClusterNode struct {
-	id     string
-	engine string
+	ID            string       `json:"id"`
+	ClusterId     string       `json:"cluster_id"`
+	Metrics       []MetricBlob `json:"metrics"`
+	Engine        string       `json:"engine"`
+	CacheNodeType string       `json:"cache_node_type"`
 }
 
 func (h *Handler) Handle() error {
-	results := map[string]ClusterSummary{}
-	var clusterNodes []*ClusterNode
+	results := []*CacheNodeSummary{}
 
 	rsp, err := h.Ec.DescribeCacheClusters(context.TODO(), &elasticache.DescribeCacheClustersInput{})
 
@@ -110,18 +121,13 @@ func (h *Handler) Handle() error {
 			continue
 		}
 
-		node := &ClusterNode{
-			id:     *c.CacheClusterId,
-			engine: *c.Engine,
-		}
-		clusterNodes = append(clusterNodes, node)
-		clusterName := deriveClusterName(node)
-		results[clusterName] = ClusterSummary{
-			ID:            clusterName,
+		clusterName := deriveClusterName(*c.CacheClusterId, *c.Engine)
+		results = append(results, &CacheNodeSummary{
+			ID:            *c.CacheClusterId,
+			ClusterId:     clusterName,
 			Engine:        *c.Engine,
-			NodeSummary:   []CacheNodeSummary{},
 			CacheNodeType: *c.CacheNodeType,
-		}
+		})
 	}
 	if err != nil {
 		return err
@@ -132,50 +138,65 @@ func (h *Handler) Handle() error {
 		fmt.Println(s.ID)
 	}
 
-	for _, clusterNode := range clusterNodes {
-		summary := results[deriveClusterName(clusterNode)]
-		nodeSummary := CacheNodeSummary{
-			ID:      clusterNode.id,
-			Metrics: []MetricBlob{},
-		}
-		for _, metric := range metricsToGet {
+	for _, clusterNode := range results {
+		for statType, metrics := range metricsToGet {
+			var metricsToGrab []types.MetricDataQuery
 
-			data, err := h.Cw.GetMetricData(context.TODO(), &cloudwatch.GetMetricDataInput{
-				EndTime: aws.Time(time.Now()),
-				MetricDataQueries: []types.MetricDataQuery{
-					{
-						MetricStat: &types.MetricStat{
-							Metric: &types.Metric{
-								MetricName: aws.String(metric),
-								Namespace:  aws.String("AWS/ElastiCache"),
-								Dimensions: []types.Dimension{
-									{
-										Name:  aws.String("CacheClusterId"),
-										Value: aws.String(clusterNode.id),
-									},
+			for _, metric := range metrics {
+				metricsToGrab = append(metricsToGrab, types.MetricDataQuery{
+					MetricStat: &types.MetricStat{
+						Metric: &types.Metric{
+							MetricName: aws.String(metric),
+							Namespace:  aws.String("AWS/ElastiCache"),
+							Dimensions: []types.Dimension{
+								{
+									Name:  aws.String("CacheClusterId"),
+									Value: aws.String(clusterNode.ID),
 								},
 							},
-							Period: aws.Int32(60 * 60 * 24 * 30), // 30 day interval
-							Stat:   aws.String("Maximum"),
 						},
-						Id: aws.String("foo"), // doesnt matter grabbing one  metric at a time
+						Period: aws.Int32(60 * 60 * 24), // 1 day interval
+						Stat:   aws.String(statType),
 					},
-				},
-				StartTime: aws.Time(time.Now().Add(time.Duration(-30) * 24 * time.Hour)),
-			})
+					Id: aws.String(strings.ToLower(metric)),
+				})
+			}
+			startTime := aws.Time(time.Now().Add(time.Duration(-30) * 24 * time.Hour)) // 30 Days ago
+			endTime := aws.Time(time.Now())
 
+			data, err := h.Cw.GetMetricData(context.TODO(), &cloudwatch.GetMetricDataInput{
+				EndTime:           endTime,
+				MetricDataQueries: metricsToGrab,
+				StartTime:         startTime,
+			})
 			if err != nil {
 				return err
 			}
-			mBlob := MetricBlob{
-				Name:   metric,
-				Values: data.MetricDataResults[len(data.MetricDataResults)-1].Values,
+
+			for {
+				for _, metric := range data.MetricDataResults {
+					mBlob := MetricBlob{
+						Name:   *metric.Id,
+						Values: metric.Values,
+					}
+					clusterNode.Metrics = append(clusterNode.Metrics, mBlob)
+				}
+				if data.NextToken != nil {
+					data, err = h.Cw.GetMetricData(context.TODO(), &cloudwatch.GetMetricDataInput{
+						EndTime:           endTime,
+						MetricDataQueries: metricsToGrab,
+						StartTime:         startTime,
+						NextToken:         data.NextToken,
+					})
+					if err != nil {
+						return err
+					}
+				} else {
+					break
+				}
 			}
 
-			nodeSummary.Metrics = append(nodeSummary.Metrics, mBlob)
 		}
-		summary.NodeSummary = append(summary.NodeSummary, nodeSummary)
-		results[deriveClusterName(clusterNode)] = summary
 	}
 	f, err := os.Create("./results.csv")
 	if err != nil {
@@ -185,18 +206,18 @@ func (h *Handler) Handle() error {
 	writer := csv.NewWriter(f)
 
 	data := [][]string{
-		{"ClusterID", "Engine", "NodeType", "NumNodes", "Metrics"},
+		{"NodeId", "ClusterID", "Engine", "NodeType", "Metrics"},
 	}
 	for _, r := range results {
-		metrics, err := json.MarshalIndent(r.NodeSummary, "", "  ")
+		metrics, err := json.MarshalIndent(r.Metrics, "", "  ")
 		if err != nil {
 			return err
 		}
 		data = append(data, []string{
 			r.ID,
+			r.ClusterId,
 			r.Engine,
 			r.CacheNodeType,
-			strconv.Itoa(len(r.NodeSummary)),
 			string(metrics),
 		})
 	}
@@ -208,12 +229,12 @@ func (h *Handler) Handle() error {
 	return nil
 }
 
-func deriveClusterName(node *ClusterNode) string {
-	switch node.engine {
+func deriveClusterName(id string, engine string) string {
+	switch engine {
 	case "redis":
-		idChunks := strings.Split(node.id, "-")
+		idChunks := strings.Split(id, "-")
 		suffix := "-" + idChunks[len(idChunks)-2] + "-" + idChunks[len(idChunks)-1]
-		clusterName := strings.TrimSuffix(node.id, suffix)
+		clusterName := strings.TrimSuffix(id, suffix)
 		return clusterName
 	default:
 		return ""
