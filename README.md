@@ -21,13 +21,15 @@ cloudwatch:GetMetricData
 
 ## Building:
 
+Running the following build step will output a binary artifact to the `dist` folder.
+
 ```console
-make
+make build
 ```
 
 ## Running
 
-After building the binary for script you can run it like:
+After building the script you can run it with the following commands:
 
 ```console
 chmod +x ./dist/ec-usage-analyzer
