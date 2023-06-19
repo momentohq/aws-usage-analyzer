@@ -36,5 +36,5 @@ chmod +x ./dist/ec-usage-analyzer
 AWS_PROFILE=my-profile AWS_REGION=us-west-2 ./dist/ec-usage-analyzer
 ```
 
-Running the script will produce an output a file named `results.csv` With raw data about your workloads needed for
+Running the script will produce an output a file named `results.csv` with raw data about your workloads needed for
 analysis.
