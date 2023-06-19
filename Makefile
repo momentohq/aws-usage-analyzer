@@ -2,7 +2,7 @@
 all: install build
 
 .PHONY: build
-build: clean
+build: clean install
 	go build -o dist/ec-usage-analyzer pkg/cli/main.go
 
 .PHONY: vendor
