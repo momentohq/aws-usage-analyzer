@@ -5,14 +5,17 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/elasticache"
+	"github.com/cheggaaa/pb/v3"
 )
 
 type Handler struct {
@@ -102,102 +105,54 @@ type CacheNodeSummary struct {
 	CacheNodeType string       `json:"cache_node_type"`
 }
 
+const MaxConcurrency = 3
+
 func (h *Handler) Handle() error {
-	results := []*CacheNodeSummary{}
 
-	rsp, err := h.Ec.DescribeCacheClusters(context.TODO(), &elasticache.DescribeCacheClustersInput{})
+	fmt.Println("Starting Elasticache Usage Analyzer")
+	fmt.Println("-----------------------------------")
+	fmt.Println("")
 
+	results, err := getRedisNodes(h.Ec)
 	if err != nil {
 		return err
 	}
+	fmt.Printf("Found %d redis nodes to collect data on.\n\n", len(results))
+	fmt.Println("Note: Please be patient if this is going slowly")
+	fmt.Println("Speed is limited by cloudwatch:GetMetricData api limits.")
+	fmt.Println("Can increase account limits in AWS Console.\n")
+	fmt.Println("Collecting Data on Nodes:\n")
 
-	for _, c := range rsp.CacheClusters {
-		if *c.Engine != "redis" {
-			fmt.Printf(
-				"ignoring unsupported cluster ignoring type:%s name:%s \n",
-				*c.Engine,
-				*c.CacheClusterId,
-			)
-			continue
-		}
+	// Init progress bar to show user feedback on script progress
+	bar := pb.Simple.Start(len(results))
 
-		clusterName := deriveClusterName(*c.CacheClusterId, *c.Engine)
-		results = append(results, &CacheNodeSummary{
-			ID:            *c.CacheClusterId,
-			ClusterId:     clusterName,
-			Engine:        *c.Engine,
-			CacheNodeType: *c.CacheNodeType,
-		})
-	}
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Found the following Clusters to collect data on:")
-	for _, s := range results {
-		fmt.Println(s.ID)
-	}
-
+	// Wait group and concurrency guard to grab node monitoring data with controlled concurrency
+	var wg = &sync.WaitGroup{}
+	guard := make(chan struct{}, MaxConcurrency) // Guard to limit max concurrency
+	wg.Add(len(results))
 	for _, clusterNode := range results {
-		for statType, metrics := range metricsToGet {
-			var metricsToGrab []types.MetricDataQuery
-
-			for _, metric := range metrics {
-				metricsToGrab = append(metricsToGrab, types.MetricDataQuery{
-					MetricStat: &types.MetricStat{
-						Metric: &types.Metric{
-							MetricName: aws.String(metric),
-							Namespace:  aws.String("AWS/ElastiCache"),
-							Dimensions: []types.Dimension{
-								{
-									Name:  aws.String("CacheClusterId"),
-									Value: aws.String(clusterNode.ID),
-								},
-							},
-						},
-						Period: aws.Int32(60 * 60 * 24), // 1 day interval
-						Stat:   aws.String(statType),
-					},
-					Id: aws.String(strings.ToLower(metric)),
-				})
-			}
-			startTime := aws.Time(time.Now().Add(time.Duration(-30) * 24 * time.Hour)) // 30 Days ago
-			endTime := aws.Time(time.Now())
-
-			data, err := h.Cw.GetMetricData(context.TODO(), &cloudwatch.GetMetricDataInput{
-				EndTime:           endTime,
-				MetricDataQueries: metricsToGrab,
-				StartTime:         startTime,
-			})
-			if err != nil {
-				return err
-			}
-
-			for {
-				for _, metric := range data.MetricDataResults {
-					mBlob := MetricBlob{
-						Name:   *metric.Id,
-						Values: metric.Values,
-					}
-					clusterNode.Metrics = append(clusterNode.Metrics, mBlob)
-				}
-				if data.NextToken != nil {
-					data, err = h.Cw.GetMetricData(context.TODO(), &cloudwatch.GetMetricDataInput{
-						EndTime:           endTime,
-						MetricDataQueries: metricsToGrab,
-						StartTime:         startTime,
-						NextToken:         data.NextToken,
-					})
-					if err != nil {
-						return err
-					}
-				} else {
-					break
-				}
-			}
-
-		}
+		guard <- struct{}{} // Limits max concurrency to maxGoroutines
+		go getNodeMetrics(h.Cw, clusterNode.ID, clusterNode, wg, bar)
+		<-guard
 	}
+
+	// Block on tasks finishing
+	wg.Wait()
+	bar.Finish() // complete loading bar for user
+
+	// Write out results to csv
+	err = writeOutResults(results)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("")
+	fmt.Println("Finished collecting data! Please send results.csv to Momento for analysis")
+
+	return nil
+}
+
+func writeOutResults(results []*CacheNodeSummary) error {
 	f, err := os.Create("./results.csv")
 	if err != nil {
 		return err
@@ -229,14 +184,111 @@ func (h *Handler) Handle() error {
 	return nil
 }
 
-func deriveClusterName(id string, engine string) string {
-	switch engine {
-	case "redis":
-		idChunks := strings.Split(id, "-")
-		suffix := "-" + idChunks[len(idChunks)-2] + "-" + idChunks[len(idChunks)-1]
-		clusterName := strings.TrimSuffix(id, suffix)
-		return clusterName
-	default:
-		return ""
+func getRedisNodes(client *elasticache.Client) ([]*CacheNodeSummary, error) {
+	var results []*CacheNodeSummary
+
+	fmt.Println("Fetching cluster information:")
+	rsp, err := client.DescribeCacheClusters(context.TODO(), &elasticache.DescribeCacheClustersInput{})
+	if err != nil {
+		return nil, err
 	}
+
+	for {
+		for _, c := range rsp.CacheClusters {
+			if *c.Engine != "redis" {
+				fmt.Printf(
+					"ignoring unsupported cluster ignoring type:%s name:%s \n",
+					*c.Engine,
+					*c.CacheClusterId,
+				)
+				continue
+			}
+
+			results = append(results, &CacheNodeSummary{
+				ID:            *c.CacheClusterId,
+				ClusterId:     *c.ReplicationGroupId,
+				Engine:        *c.Engine,
+				CacheNodeType: *c.CacheNodeType,
+			})
+
+		}
+		if rsp.Marker != nil {
+			rsp, err = client.DescribeCacheClusters(context.TODO(), &elasticache.DescribeCacheClustersInput{
+				Marker: rsp.Marker,
+			})
+			if err != nil {
+				log.Printf("error grabbing cache nodes err=%+v\n", err)
+			}
+		} else {
+			break
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+func getNodeMetrics(cwClient *cloudwatch.Client, nodeId string, results *CacheNodeSummary, group *sync.WaitGroup, bar *pb.ProgressBar) {
+	defer group.Done()
+	for statType, metrics := range metricsToGet {
+		var metricsToGrab []types.MetricDataQuery
+
+		for _, metric := range metrics {
+			metricsToGrab = append(metricsToGrab, types.MetricDataQuery{
+				MetricStat: &types.MetricStat{
+					Metric: &types.Metric{
+						MetricName: aws.String(metric),
+						Namespace:  aws.String("AWS/ElastiCache"),
+						Dimensions: []types.Dimension{
+							{
+								Name:  aws.String("CacheClusterId"),
+								Value: aws.String(nodeId),
+							},
+						},
+					},
+					Period: aws.Int32(60 * 60 * 24), // 1 day interval
+					Stat:   aws.String(statType),
+				},
+				Id: aws.String(strings.ToLower(metric)),
+			})
+		}
+		startTime := aws.Time(time.Now().Add(time.Duration(-30) * 24 * time.Hour)) // 30 Days ago
+		endTime := aws.Time(time.Now())
+
+		data, err := cwClient.GetMetricData(context.TODO(), &cloudwatch.GetMetricDataInput{
+			EndTime:           endTime,
+			MetricDataQueries: metricsToGrab,
+			StartTime:         startTime,
+		})
+		if err != nil {
+			log.Printf("error grabbing cw data err=%+v\n", err)
+			return
+		}
+
+		for {
+			for _, metric := range data.MetricDataResults {
+				mBlob := MetricBlob{
+					Name:   *metric.Id,
+					Values: metric.Values,
+				}
+				results.Metrics = append(results.Metrics, mBlob)
+			}
+			if data.NextToken != nil {
+				data, err = cwClient.GetMetricData(context.TODO(), &cloudwatch.GetMetricDataInput{
+					EndTime:           endTime,
+					MetricDataQueries: metricsToGrab,
+					StartTime:         startTime,
+					NextToken:         data.NextToken,
+				})
+				if err != nil {
+					log.Printf("error grabbing cw data err=%+v\n", err)
+					return
+				}
+			} else {
+				break
+			}
+		}
+
+	}
+	bar.Increment()
 }
