@@ -47,7 +47,7 @@ func main() {
 }
 
 // NoOpRateLimit Since we are doing a large number of retries for this application we don't want to do any client
-// side retries since we exhaust token bucket.
+// side throttling since we exhaust token bucket easily.
 // See this issue comment:
 //
 //	https://github.com/aws/aws-sdk-go-v2/issues/543#issuecomment-620124268
