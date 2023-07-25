@@ -21,18 +21,20 @@ cloudwatch:GetMetricData
 
 ## Building:
 
+Running the following build step will output a binary artifact to the `dist` folder.
+
 ```console
-make
+make build
 ```
 
 ## Running
 
-After building the binary for script you can run it like:
+After building the script you can run it with the following commands:
 
 ```console
 chmod +x ./dist/ec-usage-analyzer
 AWS_PROFILE=my-profile AWS_REGION=us-west-2 ./dist/ec-usage-analyzer
 ```
 
-Running the script will produce an output a file named `results.csv` With raw data about your workloads needed for
+Running the script will produce an output file named `results.csv` with raw data about your workloads needed for
 analysis.
