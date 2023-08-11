@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -98,11 +99,13 @@ type MetricBlob struct {
 }
 
 type CacheNodeSummary struct {
-	ID            string       `json:"id"`
-	ClusterId     string       `json:"cluster_id"`
-	Metrics       []MetricBlob `json:"metrics"`
-	Engine        string       `json:"engine"`
-	CacheNodeType string       `json:"cache_node_type"`
+	ID                 string       `json:"id"`
+	ClusterId          string       `json:"cluster_id"`
+	Engine             string       `json:"engine"`
+	CacheNodeType      string       `json:"cache_node_type"`
+	PreferredAZ        string       `json:"preferred_az"`
+	ClusterModeEnabled bool         `json:"cluster_mode_enabled"`
+	Metrics            []MetricBlob `json:"metrics"`
 }
 
 const MaxConcurrency = 3
@@ -113,15 +116,15 @@ func (h *Handler) Handle() error {
 	fmt.Println("-----------------------------------")
 	fmt.Println("")
 
-	results, err := getRedisNodes(h.Ec)
+	results, err := getAllElasticacheNodes(h.Ec)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Found %d redis nodes to collect data on.\n\n", len(results))
+	fmt.Printf("Found %d cache nodes to collect data on.\n\n", len(results))
 	fmt.Println("Note: Please be patient if this is going slowly")
 	fmt.Println("Speed is limited by cloudwatch:GetMetricData api limits.")
-	fmt.Println("Can increase account limits in AWS Console.\n")
-	fmt.Println("Collecting Data on Nodes:\n")
+	fmt.Printf("Can increase account limits in AWS Console.\n\n")
+	fmt.Printf("Collecting Data on Nodes:\n\n")
 
 	// Init progress bar to show user feedback on script progress
 	bar := pb.Simple.Start(len(results))
@@ -132,7 +135,7 @@ func (h *Handler) Handle() error {
 	wg.Add(len(results))
 	for _, clusterNode := range results {
 		guard <- struct{}{} // Limits max concurrency to maxGoroutines
-		go getNodeMetrics(h.Cw, clusterNode.ID, clusterNode, wg, bar)
+		go getNodeMetrics(h.Cw, clusterNode, wg, bar)
 		<-guard
 	}
 
@@ -161,10 +164,10 @@ func writeOutResults(results []*CacheNodeSummary) error {
 	writer := csv.NewWriter(f)
 
 	data := [][]string{
-		{"NodeId", "ClusterID", "Engine", "NodeType", "Metrics"},
+		{"NodeId", "ClusterID", "Engine", "NodeType", "AzPreference", "ClusterMode", "Metrics"},
 	}
 	for _, r := range results {
-		metrics, err := json.MarshalIndent(r.Metrics, "", "  ")
+		metrics, err := json.Marshal(r.Metrics)
 		if err != nil {
 			return err
 		}
@@ -173,6 +176,8 @@ func writeOutResults(results []*CacheNodeSummary) error {
 			r.ClusterId,
 			r.Engine,
 			r.CacheNodeType,
+			r.PreferredAZ,
+			strconv.FormatBool(r.ClusterModeEnabled),
 			string(metrics),
 		})
 	}
@@ -184,34 +189,59 @@ func writeOutResults(results []*CacheNodeSummary) error {
 	return nil
 }
 
-func getRedisNodes(client *elasticache.Client) ([]*CacheNodeSummary, error) {
+func getAllElasticacheNodes(client *elasticache.Client) ([]*CacheNodeSummary, error) {
 	var results []*CacheNodeSummary
 
 	fmt.Println("Fetching cluster information:")
-	rsp, err := client.DescribeCacheClusters(context.TODO(), &elasticache.DescribeCacheClustersInput{})
+	rsp, err := client.DescribeCacheClusters(context.TODO(), &elasticache.DescribeCacheClustersInput{
+		ShowCacheNodeInfo: aws.Bool(true),
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	for {
 		for _, c := range rsp.CacheClusters {
-			if *c.Engine != "redis" {
-				fmt.Printf(
-					"ignoring unsupported cluster ignoring type:%s name:%s \n",
-					*c.Engine,
-					*c.CacheClusterId,
-				)
-				continue
+			// Elasticache has different API responses depending on engine type need handle both :/
+			switch *c.Engine {
+			case "redis":
+				// Determine if redis node is in cluster mode or not
+				clusterModeEnabled := false
+				if len(
+					strings.Split(
+						strings.TrimPrefix(*c.CacheClusterId, *c.ReplicationGroupId+"-"),
+						"-",
+					),
+					// If is in redis cluster mode will have suffix like 002-002 vs just 002
+					// This seems to be the best way to determine this from this API right
+					// now :(
+				) == 2 {
+					clusterModeEnabled = true
+				}
+
+				results = append(results, &CacheNodeSummary{
+					ID:                 *c.CacheClusterId,
+					ClusterId:          *c.ReplicationGroupId,
+					Engine:             *c.Engine,
+					CacheNodeType:      *c.CacheNodeType,
+					PreferredAZ:        *c.PreferredAvailabilityZone,
+					ClusterModeEnabled: clusterModeEnabled,
+				})
+			case "memcached":
+				for _, cacheNode := range c.CacheNodes {
+					results = append(results, &CacheNodeSummary{
+						ID:                 *cacheNode.CacheNodeId,
+						ClusterId:          *c.CacheClusterId,
+						Engine:             *c.Engine,
+						CacheNodeType:      *c.CacheNodeType,
+						PreferredAZ:        *cacheNode.CustomerAvailabilityZone,
+						ClusterModeEnabled: false, // No such thing for memcached
+					})
+				}
 			}
-
-			results = append(results, &CacheNodeSummary{
-				ID:            *c.CacheClusterId,
-				ClusterId:     *c.ReplicationGroupId,
-				Engine:        *c.Engine,
-				CacheNodeType: *c.CacheNodeType,
-			})
-
 		}
+
+		// Paginate till we got all cache clusters
 		if rsp.Marker != nil {
 			rsp, err = client.DescribeCacheClusters(context.TODO(), &elasticache.DescribeCacheClustersInput{
 				Marker: rsp.Marker,
@@ -228,11 +258,19 @@ func getRedisNodes(client *elasticache.Client) ([]*CacheNodeSummary, error) {
 	}
 	return results, nil
 }
-func getNodeMetrics(cwClient *cloudwatch.Client, nodeId string, results *CacheNodeSummary, group *sync.WaitGroup, bar *pb.ProgressBar) {
+func getNodeMetrics(cwClient *cloudwatch.Client, nodeSummary *CacheNodeSummary, group *sync.WaitGroup, bar *pb.ProgressBar) {
 	defer group.Done()
+
+	// Calc node and cluster id to use to fetch metrics
+	cacheNodeId := nodeSummary.ID
+	cacheClusterID := nodeSummary.ClusterId
+	if nodeSummary.Engine == "redis" {
+		cacheNodeId = "0001"            // for redis metrics cacheNodeID is always hard coded to 0001 :/
+		cacheClusterID = nodeSummary.ID // for redis metrics full node id is needed for cluster name :/
+	}
+
 	for statType, metrics := range metricsToGet {
 		var metricsToGrab []types.MetricDataQuery
-
 		for _, metric := range metrics {
 			metricsToGrab = append(metricsToGrab, types.MetricDataQuery{
 				MetricStat: &types.MetricStat{
@@ -242,7 +280,11 @@ func getNodeMetrics(cwClient *cloudwatch.Client, nodeId string, results *CacheNo
 						Dimensions: []types.Dimension{
 							{
 								Name:  aws.String("CacheClusterId"),
-								Value: aws.String(nodeId),
+								Value: aws.String(cacheClusterID),
+							},
+							{
+								Name:  aws.String("CacheNodeId"),
+								Value: aws.String(cacheNodeId),
 							},
 						},
 					},
@@ -267,11 +309,10 @@ func getNodeMetrics(cwClient *cloudwatch.Client, nodeId string, results *CacheNo
 
 		for {
 			for _, metric := range data.MetricDataResults {
-				mBlob := MetricBlob{
+				nodeSummary.Metrics = append(nodeSummary.Metrics, MetricBlob{
 					Name:   *metric.Id,
 					Values: metric.Values,
-				}
-				results.Metrics = append(results.Metrics, mBlob)
+				})
 			}
 			if data.NextToken != nil {
 				data, err = cwClient.GetMetricData(context.TODO(), &cloudwatch.GetMetricDataInput{

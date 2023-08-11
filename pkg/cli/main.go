@@ -24,7 +24,7 @@ func main() {
 				options.StandardOptions = []func(*retry.StandardOptions){
 					func(options *retry.StandardOptions) {
 						// Disable Rate Limiter since we have high number of retries and backoff for this.
-						// We dont want to exhaust client side bucket
+						// We don't want to exhaust client side bucket
 						options.RateLimiter = NoOpRateLimit{}
 					},
 				}
