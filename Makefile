@@ -3,7 +3,7 @@ all: install build
 
 .PHONY: build
 build: clean install
-	go build -o dist/ec-usage-analyzer pkg/cli/main.go
+	go build -o dist/aws-usage-analyzer pkg/cli/main.go
 
 .PHONY: vendor
 install:
