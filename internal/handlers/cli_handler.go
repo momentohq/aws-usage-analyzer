@@ -15,16 +15,27 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/elasticache"
 	"github.com/cheggaaa/pb/v3"
 )
 
 type Handler struct {
-	Cw *cloudwatch.Client
-	Ec *elasticache.Client
+	Cw  *cloudwatch.Client
+	Ec  *elasticache.Client
+	DDB *dynamodb.Client
 }
 
-var metricsToGet = map[string][]string{
+var ddbTableMetricsToGet = map[string][]string{
+	"Sum": {
+		"ConsumedReadCapacityUnits",
+		"ConsumedWriteCapacityUnits",
+
+		"TimeToLiveDeletedItemCount",
+	},
+}
+
+var cacheMetricsToGet = map[string][]string{
 	"Sum": {
 		"NetworkBytesIn",
 		"NetworkBytesOut",
@@ -46,20 +57,6 @@ var metricsToGet = map[string][]string{
 	},
 	"Average": {
 		"DB0AverageTTL",
-
-		"EvalBasedCmdsLatency",
-		"GeoSpatialBasedCmdsLatency",
-		"GetTypeCmdsLatency",
-		"HashBasedCmdsLatency",
-		"JsonBasedCmdsLatency",
-		"KeyBasedCmdsLatency",
-		"ListBasedCmdsLatency",
-		"PubSubBasedCmdsLatency",
-		"SetBasedCmdsLatency",
-		"SetTypeCmdsLatency",
-		"SortedSetBasedCmdsLatency",
-		"StringBasedCmdsLatency",
-		"StreamBasedCmdsLatency",
 	},
 	"Maximum": {
 		"CurrConnections",
@@ -76,26 +73,19 @@ var metricsToGet = map[string][]string{
 		"Evictions",
 
 		"CacheHitRate",
-
-		"EvalBasedCmdsLatency",
-		"GeoSpatialBasedCmdsLatency",
-		"GetTypeCmdsLatency",
-		"HashBasedCmdsLatency",
-		"JsonBasedCmdsLatency",
-		"KeyBasedCmdsLatency",
-		"ListBasedCmdsLatency",
-		"PubSubBasedCmdsLatency",
-		"SetBasedCmdsLatency",
-		"SetTypeCmdsLatency",
-		"SortedSetBasedCmdsLatency",
-		"StringBasedCmdsLatency",
-		"StreamBasedCmdsLatency",
 	},
 }
 
 type MetricBlob struct {
 	Name   string    `json:"name"`
 	Values []float64 `json:"values"`
+}
+
+type ResourceSummary struct {
+	ID             string            `json:"id"`
+	Type           string            `json:"type"`
+	AdditionalData map[string]string `json:"additional_data"`
+	Metrics        []MetricBlob      `json:"metrics"`
 }
 
 type CacheNodeSummary struct {
@@ -108,34 +98,61 @@ type CacheNodeSummary struct {
 	Metrics            []MetricBlob `json:"metrics"`
 }
 
+type DdbTableSummary struct {
+	ID         string       `json:"id"`
+	TTLEnabled bool         `json:"cluster_mode_enabled"`
+	ItemCount  int64        `json:"item_count"`
+	Metrics    []MetricBlob `json:"metrics"`
+}
+
 const MaxConcurrency = 3
 
 func (h *Handler) Handle() error {
-
-	fmt.Println("Starting Elasticache Usage Analyzer")
+	fmt.Println("Starting AWS Usage Collector")
 	fmt.Println("-----------------------------------")
 	fmt.Println("")
 
-	results, err := getAllElasticacheNodes(h.Ec)
+	fmt.Println("Looking for Elasticache Nodes to analyze:")
+	elasticacheNodes, err := getAllElasticacheNodes(h.Ec)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Found %d cache nodes to collect data on.\n\n", len(results))
+	fmt.Printf("Found %d cache nodes to collect data on.\n\n", len(elasticacheNodes))
+
+	fmt.Println("Looking for DDB tables to analyze:")
+	ddbTables, err := getAllDDBTables(h.DDB)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Found %d ddb tables to collect data on.\n\n", len(ddbTables))
+
+	fmt.Println("Starting metrics collection on resources")
 	fmt.Println("Note: Please be patient if this is going slowly")
 	fmt.Println("Speed is limited by cloudwatch:GetMetricData api limits.")
 	fmt.Printf("Can increase account limits in AWS Console.\n\n")
-	fmt.Printf("Collecting Data on Nodes:\n\n")
+	fmt.Printf("Collecting Data on Resources:\n\n")
+
+	resourcesToFetchMetricsOn := append(ddbTables, elasticacheNodes...)
 
 	// Init progress bar to show user feedback on script progress
-	bar := pb.Simple.Start(len(results))
+	bar := pb.Simple.Start(len(resourcesToFetchMetricsOn))
 
 	// Wait group and concurrency guard to grab node monitoring data with controlled concurrency
 	var wg = &sync.WaitGroup{}
 	guard := make(chan struct{}, MaxConcurrency) // Guard to limit max concurrency
-	wg.Add(len(results))
-	for _, clusterNode := range results {
+	wg.Add(len(resourcesToFetchMetricsOn))
+
+	for _, resource := range resourcesToFetchMetricsOn {
 		guard <- struct{}{} // Limits max concurrency to maxGoroutines
-		go getNodeMetrics(h.Cw, clusterNode, wg, bar)
+		switch resource.Type {
+		case "AWS::Elasticache::RedisNode":
+			fallthrough
+		case "AWS::Elasticache::MemcachedNode":
+			go getElasticacheNodeMetrics(h.Cw, resource, wg, bar)
+		case "AWS::DynamoDB:Table":
+			go getDDBTableMetrics(h.Cw, resource, wg, bar)
+
+		}
 		<-guard
 	}
 
@@ -143,8 +160,8 @@ func (h *Handler) Handle() error {
 	wg.Wait()
 	bar.Finish() // complete loading bar for user
 
-	// Write out results to csv
-	err = writeOutResults(results)
+	// Write out resource data to csv
+	err = writeOutResults(resourcesToFetchMetricsOn)
 	if err != nil {
 		return err
 	}
@@ -155,7 +172,45 @@ func (h *Handler) Handle() error {
 	return nil
 }
 
-func writeOutResults(results []*CacheNodeSummary) error {
+func getAllDDBTables(ddbClient *dynamodb.Client) ([]*ResourceSummary, error) {
+	var returnList []*ResourceSummary
+
+	listTableRsp, err := ddbClient.ListTables(context.TODO(), &dynamodb.ListTablesInput{})
+	if err != nil {
+		return nil, err
+	}
+	for _, table := range listTableRsp.TableNames {
+		dRsp, err := ddbClient.DescribeTable(context.TODO(), &dynamodb.DescribeTableInput{
+			TableName: aws.String(table),
+		})
+		if err != nil {
+			return nil, err
+		}
+		dTTLRsp, err := ddbClient.DescribeTimeToLive(context.TODO(), &dynamodb.DescribeTimeToLiveInput{
+			TableName: aws.String(table),
+		})
+		if err != nil {
+			return nil, err
+		}
+		ttlEnabled := false
+		if dTTLRsp.TimeToLiveDescription.TimeToLiveStatus == "ENABLED" {
+			ttlEnabled = true
+		}
+
+		returnList = append(returnList, &ResourceSummary{
+			ID:   table,
+			Type: "AWS::DynamoDB:Table",
+			AdditionalData: map[string]string{
+				"ttl_enabled": strconv.FormatBool(ttlEnabled),
+				"item_count":  strconv.FormatInt(*dRsp.Table.ItemCount, 10),
+			},
+		})
+	}
+
+	return returnList, nil
+}
+
+func writeOutResults(results []*ResourceSummary) error {
 	f, err := os.Create("./results.csv")
 	if err != nil {
 		return err
@@ -164,20 +219,21 @@ func writeOutResults(results []*CacheNodeSummary) error {
 	writer := csv.NewWriter(f)
 
 	data := [][]string{
-		{"NodeId", "ClusterID", "Engine", "NodeType", "AzPreference", "ClusterMode", "Metrics"},
+		{"ResourceId", "Type", "AdditionalData", "Metrics"},
 	}
 	for _, r := range results {
 		metrics, err := json.Marshal(r.Metrics)
 		if err != nil {
 			return err
 		}
+		additionalData, err := json.Marshal(r.AdditionalData)
+		if err != nil {
+			return err
+		}
 		data = append(data, []string{
 			r.ID,
-			r.ClusterId,
-			r.Engine,
-			r.CacheNodeType,
-			r.PreferredAZ,
-			strconv.FormatBool(r.ClusterModeEnabled),
+			r.Type,
+			string(additionalData),
 			string(metrics),
 		})
 	}
@@ -189,10 +245,8 @@ func writeOutResults(results []*CacheNodeSummary) error {
 	return nil
 }
 
-func getAllElasticacheNodes(client *elasticache.Client) ([]*CacheNodeSummary, error) {
-	var results []*CacheNodeSummary
-
-	fmt.Println("Fetching cluster information:")
+func getAllElasticacheNodes(client *elasticache.Client) ([]*ResourceSummary, error) {
+	var results []*ResourceSummary
 	rsp, err := client.DescribeCacheClusters(context.TODO(), &elasticache.DescribeCacheClustersInput{
 		ShowCacheNodeInfo: aws.Bool(true),
 	})
@@ -219,23 +273,29 @@ func getAllElasticacheNodes(client *elasticache.Client) ([]*CacheNodeSummary, er
 					clusterModeEnabled = true
 				}
 
-				results = append(results, &CacheNodeSummary{
-					ID:                 *c.CacheClusterId,
-					ClusterId:          *c.ReplicationGroupId,
-					Engine:             *c.Engine,
-					CacheNodeType:      *c.CacheNodeType,
-					PreferredAZ:        *c.PreferredAvailabilityZone,
-					ClusterModeEnabled: clusterModeEnabled,
+				results = append(results, &ResourceSummary{
+					ID:   *c.CacheClusterId,
+					Type: "AWS::Elasticache::RedisNode",
+					AdditionalData: map[string]string{
+						"cluster_id":           *c.ReplicationGroupId,
+						"engine":               *c.Engine,
+						"cache_node_type":      *c.CacheNodeType,
+						"preferred_az":         *c.PreferredAvailabilityZone,
+						"cluster_mode_enabled": strconv.FormatBool(clusterModeEnabled),
+					},
 				})
 			case "memcached":
 				for _, cacheNode := range c.CacheNodes {
-					results = append(results, &CacheNodeSummary{
-						ID:                 *cacheNode.CacheNodeId,
-						ClusterId:          *c.CacheClusterId,
-						Engine:             *c.Engine,
-						CacheNodeType:      *c.CacheNodeType,
-						PreferredAZ:        *cacheNode.CustomerAvailabilityZone,
-						ClusterModeEnabled: false, // No such thing for memcached
+					results = append(results, &ResourceSummary{
+						ID:   *cacheNode.CacheNodeId,
+						Type: "AWS::Elasticache::MemcachedNode",
+						AdditionalData: map[string]string{
+							"cluster_id":           *c.CacheClusterId,
+							"engine":               *c.Engine,
+							"cache_node_type":      *c.CacheNodeType,
+							"preferred_az":         *cacheNode.CustomerAvailabilityZone,
+							"cluster_mode_enabled": strconv.FormatBool(false),
+						},
 					})
 				}
 			}
@@ -258,18 +318,82 @@ func getAllElasticacheNodes(client *elasticache.Client) ([]*CacheNodeSummary, er
 	}
 	return results, nil
 }
-func getNodeMetrics(cwClient *cloudwatch.Client, nodeSummary *CacheNodeSummary, group *sync.WaitGroup, bar *pb.ProgressBar) {
+func getDDBTableMetrics(cwClient *cloudwatch.Client, ddbTableSummary *ResourceSummary, group *sync.WaitGroup, bar *pb.ProgressBar) {
+	defer group.Done()
+
+	for statType, metrics := range ddbTableMetricsToGet {
+		var metricsToGrab []types.MetricDataQuery
+		for _, metric := range metrics {
+			metricsToGrab = append(metricsToGrab, types.MetricDataQuery{
+				MetricStat: &types.MetricStat{
+					Metric: &types.Metric{
+						MetricName: aws.String(metric),
+						Namespace:  aws.String("AWS/DynamoDB"),
+						Dimensions: []types.Dimension{
+							{
+								Name:  aws.String("TableName"),
+								Value: aws.String(ddbTableSummary.ID),
+							},
+						},
+					},
+					Period: aws.Int32(60 * 60 * 24), // 1 day interval
+					Stat:   aws.String(statType),
+				},
+				Id: aws.String(strings.ToLower(metric)),
+			})
+		}
+		startTime := aws.Time(time.Now().Add(time.Duration(-30) * 24 * time.Hour)) // 30 Days ago
+		endTime := aws.Time(time.Now())
+
+		data, err := cwClient.GetMetricData(context.TODO(), &cloudwatch.GetMetricDataInput{
+			EndTime:           endTime,
+			MetricDataQueries: metricsToGrab,
+			StartTime:         startTime,
+		})
+		if err != nil {
+			log.Printf("error grabbing cw data err=%+v\n", err)
+			return
+		}
+
+		for {
+			for _, metric := range data.MetricDataResults {
+				ddbTableSummary.Metrics = append(ddbTableSummary.Metrics, MetricBlob{
+					Name:   *metric.Id,
+					Values: metric.Values,
+				})
+			}
+			if data.NextToken != nil {
+				data, err = cwClient.GetMetricData(context.TODO(), &cloudwatch.GetMetricDataInput{
+					EndTime:           endTime,
+					MetricDataQueries: metricsToGrab,
+					StartTime:         startTime,
+					NextToken:         data.NextToken,
+				})
+				if err != nil {
+					log.Printf("here error grabbing cw data err=%+v\n", err)
+					return
+				}
+			} else {
+				break
+			}
+		}
+
+	}
+	bar.Increment()
+}
+
+func getElasticacheNodeMetrics(cwClient *cloudwatch.Client, nodeSummary *ResourceSummary, group *sync.WaitGroup, bar *pb.ProgressBar) {
 	defer group.Done()
 
 	// Calc node and cluster id to use to fetch metrics
 	cacheNodeId := nodeSummary.ID
-	cacheClusterID := nodeSummary.ClusterId
-	if nodeSummary.Engine == "redis" {
+	cacheClusterID := nodeSummary.AdditionalData["cluster_id"]
+	if nodeSummary.AdditionalData["engine"] == "redis" {
 		cacheNodeId = "0001"            // for redis metrics cacheNodeID is always hard coded to 0001 :/
 		cacheClusterID = nodeSummary.ID // for redis metrics full node id is needed for cluster name :/
 	}
 
-	for statType, metrics := range metricsToGet {
+	for statType, metrics := range cacheMetricsToGet {
 		var metricsToGrab []types.MetricDataQuery
 		for _, metric := range metrics {
 			metricsToGrab = append(metricsToGrab, types.MetricDataQuery{

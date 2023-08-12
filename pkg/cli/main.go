@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"os"
 
 	"github.com/momentohq/ec-usage-analyzer/internal/handlers"
@@ -37,8 +38,9 @@ func main() {
 	}
 
 	h := &handlers.Handler{
-		Cw: cloudwatch.NewFromConfig(cfg),
-		Ec: elasticache.NewFromConfig(cfg),
+		Cw:  cloudwatch.NewFromConfig(cfg),
+		Ec:  elasticache.NewFromConfig(cfg),
+		DDB: dynamodb.NewFromConfig(cfg),
 	}
 	err = h.Handle()
 	if err != nil {
