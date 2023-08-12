@@ -8,11 +8,13 @@ is being used.
 ## Permissions Needed
 
 This script is currently intended to be run from an operator laptop with READ only permissions.
-Specifically you will need following permissions from cloud watch and elasticache.
+Specifically you will need following permissions from cloud watch, elasticache, and DynamoDB.
 
 ```
 elasticache:DescribeCacheClusters
 cloudwatch:GetMetricData
+dynamodb:ListTables
+dynamodb:DescribeTable
 ```
 
 ## Requirements.
