@@ -3,7 +3,7 @@
 The aws-usage-analyzer script will fetch information about your Elasticache clusters and DynamoDB Tables to help find 
 oppurtunities for optomizations with Momento.
 
-![Usage Diagram](./docs/imgs/ec-usage-analyzer.png)
+![Usage Diagram](./docs/imgs/AWS-Usage-Analyzer.png)
 
 ## Permissions Needed
 
