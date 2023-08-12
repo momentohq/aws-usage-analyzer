@@ -1,7 +1,7 @@
-# ec-usage-analyzer
+# aws-usage-analyzer
 
-The ec-usage-analyzer script will fetch information about your Elasticache clusters needed to analyze how efficiently it
-is being used.
+The aws-usage-analyzer script will fetch information about your Elasticache clusters and DynamoDB Tables to help find 
+oppurtunities for optomizations with Momento.
 
 ![Usage Diagram](./docs/imgs/ec-usage-analyzer.png)
 
@@ -34,8 +34,8 @@ make build
 After building the script you can run it with the following commands:
 
 ```console
-chmod +x ./dist/ec-usage-analyzer
-AWS_PROFILE=my-profile AWS_REGION=us-west-2 ./dist/ec-usage-analyzer
+chmod +x ./dist/aws-usage-analyzer
+AWS_PROFILE=my-profile AWS_REGION=us-west-2 ./dist/aws-usage-analyzer
 ```
 
 Running the script will produce an output file named `results.csv` with raw data about your workloads needed for
