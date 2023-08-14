@@ -1,4 +1,4 @@
-module github.com/momentohq/ec-usage-analyzer
+module github.com/momentohq/aws-usage-analyzer
 
 go 1.20
 
