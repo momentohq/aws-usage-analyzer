@@ -175,17 +175,40 @@ func (h *Handler) Handle() error {
 func getAllDDBTables(ddbClient *dynamodb.Client) ([]*ResourceSummary, error) {
 	var returnList []*ResourceSummary
 
-	listTableRsp, err := ddbClient.ListTables(context.TODO(), &dynamodb.ListTablesInput{})
+	listTableRsp, err := ddbClient.ListTables(context.TODO(), &dynamodb.ListTablesInput{
+		Limit: aws.Int32(100),
+	})
 	if err != nil {
 		return nil, err
 	}
-	for _, table := range listTableRsp.TableNames {
+
+	tables := listTableRsp.TableNames
+	lastTableSeen := listTableRsp.LastEvaluatedTableName
+	if lastTableSeen != nil {
+		for {
+			listTableRsp, err := ddbClient.ListTables(context.TODO(), &dynamodb.ListTablesInput{
+				ExclusiveStartTableName: lastTableSeen,
+				Limit:                   aws.Int32(100),
+			})
+			if err != nil {
+				return nil, err
+			}
+			tables = append(tables, listTableRsp.TableNames...)
+			lastTableSeen = listTableRsp.LastEvaluatedTableName
+			if lastTableSeen == nil {
+				break
+			}
+		}
+	}
+
+	for _, table := range tables {
 		dRsp, err := ddbClient.DescribeTable(context.TODO(), &dynamodb.DescribeTableInput{
 			TableName: aws.String(table),
 		})
 		if err != nil {
 			return nil, err
 		}
+		// TODO this is very slow API maybe break into its own step
 		dTTLRsp, err := ddbClient.DescribeTimeToLive(context.TODO(), &dynamodb.DescribeTimeToLiveInput{
 			TableName: aws.String(table),
 		})
