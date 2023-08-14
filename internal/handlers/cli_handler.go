@@ -149,7 +149,7 @@ func (h *Handler) Handle() error {
 			fallthrough
 		case "AWS::Elasticache::MemcachedNode":
 			go getElasticacheNodeMetrics(h.Cw, resource, wg, bar)
-		case "AWS::DynamoDB:Table":
+		case "AWS::DynamoDB::Table":
 			go getDDBTableMetrics(h.Cw, resource, wg, bar)
 
 		}
@@ -199,7 +199,7 @@ func getAllDDBTables(ddbClient *dynamodb.Client) ([]*ResourceSummary, error) {
 
 		returnList = append(returnList, &ResourceSummary{
 			ID:   table,
-			Type: "AWS::DynamoDB:Table",
+			Type: "AWS::DynamoDB::Table",
 			AdditionalData: map[string]string{
 				"ttl_enabled": strconv.FormatBool(ttlEnabled),
 				"item_count":  strconv.FormatInt(*dRsp.Table.ItemCount, 10),
