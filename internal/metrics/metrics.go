@@ -30,9 +30,7 @@ func (c *ResourceMetricFetcher) GetMetricsForResources(resources []*resources.Re
 
 	for _, resource := range resources {
 		guard <- struct{}{} // Limits max concurrency to maxGoroutines
-		go c.fetchMetricsForResource(resource)
-		wg.Done()
-		bar.Increment()
+		go c.fetchMetricsForResource(resource, wg, bar)
 		<-guard
 	}
 
@@ -43,7 +41,11 @@ func (c *ResourceMetricFetcher) GetMetricsForResources(resources []*resources.Re
 
 func (c *ResourceMetricFetcher) fetchMetricsForResource(
 	resource *resources.ResourceSummary,
+	wg *sync.WaitGroup,
+	bar *pb.ProgressBar,
 ) {
+	defer wg.Done()
+	defer bar.Increment()
 	targets := resource.Resource.GetMetricTargets(resource)
 	for statType, metrics := range targets.Targets {
 		var metricsToGrab []types.MetricDataQuery
@@ -76,10 +78,12 @@ func (c *ResourceMetricFetcher) fetchMetricsForResource(
 
 		for {
 			for _, metric := range data.MetricDataResults {
-				resource.Metrics = append(resource.Metrics, resources.MetricBlob{
-					Name:   *metric.Id,
-					Values: metric.Values,
-				})
+				if len(metric.Values) > 0 {
+					resource.Metrics = append(resource.Metrics, resources.MetricBlob{
+						Name:   *metric.Id,
+						Values: metric.Values,
+					})
+				}
 			}
 			if data.NextToken != nil {
 				data, err = c.CW.GetMetricData(context.TODO(), &cloudwatch.GetMetricDataInput{
