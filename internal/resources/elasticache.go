@@ -71,23 +71,33 @@ func (ec *Elasticache) GetAll() ([]*ResourceSummary, error) {
 			case "redis":
 				// Determine if redis node is in cluster mode or not
 				clusterModeEnabled := false
-				if c.ReplicationGroupId == nil || len(
-					strings.Split(
-						strings.TrimPrefix(*c.CacheClusterId, *c.ReplicationGroupId+"-"),
-						"-",
-					),
-					// If is in redis cluster mode will have suffix like 002-002 vs just 002
-					// This seems to be the best way to determine this from this API right
-					// now :(
-				) == 2 {
-					clusterModeEnabled = true
+				if c.ReplicationGroupId != nil {
+					if len(
+						strings.Split(
+							strings.TrimPrefix(*c.CacheClusterId, *c.ReplicationGroupId+"-"),
+							"-",
+						),
+						// If is in redis cluster mode will have suffix like 002-002 vs just 002
+						// This seems to be the best way to determine this from this API right
+						// now :(
+					) == 2 {
+						clusterModeEnabled = true
+					}
+				}
+
+				// Elasticache does not set ReplicationGroupId consistently on non replicated
+				// clusters made via CLI vs UI. So we have to do this to determine proper
+				// cluster name
+				clusterId := *c.CacheClusterId
+				if c.ReplicationGroupId != nil {
+					clusterId = *c.ReplicationGroupId
 				}
 
 				results = append(results, &ResourceSummary{
 					ID:   *c.CacheClusterId,
 					Type: "AWS::Elasticache::RedisNode",
 					AdditionalData: map[string]string{
-						"cluster_id":           *c.CacheClusterId,
+						"cluster_id":           clusterId,
 						"engine":               *c.Engine,
 						"cache_node_type":      *c.CacheNodeType,
 						"preferred_az":         *c.PreferredAvailabilityZone,
