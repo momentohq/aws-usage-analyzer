@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/aws-sdk-go-v2/service/elasticache"
@@ -71,7 +72,7 @@ func (ec *Elasticache) GetAll() ([]*ResourceSummary, error) {
 			case "redis":
 				// Determine if redis node is in cluster mode or not
 				clusterModeEnabled := false
-				if len(
+				if c.ReplicationGroupId == nil || len(
 					strings.Split(
 						strings.TrimPrefix(*c.CacheClusterId, *c.ReplicationGroupId+"-"),
 						"-",
@@ -87,7 +88,7 @@ func (ec *Elasticache) GetAll() ([]*ResourceSummary, error) {
 					ID:   *c.CacheClusterId,
 					Type: "AWS::Elasticache::RedisNode",
 					AdditionalData: map[string]string{
-						"cluster_id":           *c.ReplicationGroupId,
+						"cluster_id":           *c.CacheClusterId,
 						"engine":               *c.Engine,
 						"cache_node_type":      *c.CacheNodeType,
 						"preferred_az":         *c.PreferredAvailabilityZone,
