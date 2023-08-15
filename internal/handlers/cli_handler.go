@@ -46,8 +46,9 @@ func (h *Handler) Handle() error {
 	util.MultiPrintln([]string{
 		"Starting metrics collection on resources",
 		"Note: Please be patient if this is going slowly",
-		"Can increase account limits in AWS Console.\n\n",
-		"Collecting Data on Resources:\n",
+		"Can increase account limits in AWS Console for ",
+		"CloudWatch GetMetrics API.\n\n",
+		"Collecting Data on Resources:",
 	})
 
 	resourcesToFetchMetricsOn := append(ddbTables, elasticacheNodes...)

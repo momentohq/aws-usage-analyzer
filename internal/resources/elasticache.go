@@ -143,7 +143,7 @@ func (ec *Elasticache) GetAll() ([]*ResourceSummary, error) {
 func (ec *Elasticache) GetMetricTargets(r *ResourceSummary) ResourceMetricTargets {
 	if r.Type == "AWS::Elasticache::RedisNode" {
 		return ResourceMetricTargets{
-			Namespace: "AWS/Elasticache",
+			Namespace: "AWS/ElastiCache",
 			Dimensions: []types.Dimension{
 				{
 					Name:  aws.String("CacheClusterId"),
@@ -159,7 +159,7 @@ func (ec *Elasticache) GetMetricTargets(r *ResourceSummary) ResourceMetricTarget
 		}
 	}
 	return ResourceMetricTargets{
-		Namespace: "AWS/Elasticache",
+		Namespace: "AWS/ElastiCache",
 		Dimensions: []types.Dimension{
 			{
 				Name:  aws.String("CacheClusterId"),
