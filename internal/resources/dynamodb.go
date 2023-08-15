@@ -82,12 +82,19 @@ func (ddb *DynamoDb) GetAll() ([]*ResourceSummary, error) {
 			ttlEnabled = true
 		}
 
+		avg_item_size := int64(0)
+		if *dRsp.Table.ItemCount != 0 {
+			avg_item_size = *dRsp.Table.TableSizeBytes / *dRsp.Table.ItemCount
+		}
+
 		returnList = append(returnList, &ResourceSummary{
 			ID:   table,
 			Type: "AWS::DynamoDB::Table",
 			AdditionalData: map[string]string{
-				"ttl_enabled": strconv.FormatBool(ttlEnabled),
-				"item_count":  strconv.FormatInt(*dRsp.Table.ItemCount, 10),
+				"ttl_enabled":   strconv.FormatBool(ttlEnabled),
+				"item_count":    strconv.FormatInt(*dRsp.Table.ItemCount, 10),
+				"table_size_bytes": strconv.FormatInt(*dRsp.Table.TableSizeBytes, 10),
+				"avg_item_size_bytes": strconv.FormatInt(avg_item_size, 10),
 			},
 			Resource: ddb,
 		})
