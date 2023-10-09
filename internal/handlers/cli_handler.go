@@ -89,7 +89,7 @@ func writeOutResults(results []*resources.ResourceSummary) error {
 		}
 		data = append(data, []string{
 			r.ID,
-			r.Type,
+			string(r.Type),
 			string(additionalData),
 			string(metrics),
 		})

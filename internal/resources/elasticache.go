@@ -95,7 +95,7 @@ func (ec *Elasticache) GetAll() ([]*ResourceSummary, error) {
 
 				results = append(results, &ResourceSummary{
 					ID:   *c.CacheClusterId,
-					Type: "AWS::Elasticache::RedisNode",
+					Type: AwsElasticacheRedisNode,
 					AdditionalData: map[string]string{
 						"cluster_id":           clusterId,
 						"engine":               *c.Engine,
@@ -109,7 +109,7 @@ func (ec *Elasticache) GetAll() ([]*ResourceSummary, error) {
 				for _, cacheNode := range c.CacheNodes {
 					results = append(results, &ResourceSummary{
 						ID:   *cacheNode.CacheNodeId,
-						Type: "AWS::Elasticache::MemcachedNode",
+						Type: AwsElasticacheMemcachedNode,
 						AdditionalData: map[string]string{
 							"cluster_id":           *c.CacheClusterId,
 							"engine":               *c.Engine,
