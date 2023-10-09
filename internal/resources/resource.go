@@ -7,9 +7,18 @@ type MetricBlob struct {
 	Values []float64 `json:"values"`
 }
 
+type ResourceType string
+
+const (
+	AwsElasticacheRedisNode     ResourceType = "AWS::Elasticache::RedisNode"
+	AwsElasticacheMemcachedNode ResourceType = "AWS::Elasticache::MemcachedNode"
+	AwsDynamoDbTable                         = "AWS::DynamoDB::Table"
+	AwsDynamoDbGsi                           = "AWS::DynamoDB::GSI"
+)
+
 type ResourceSummary struct {
 	ID             string            `json:"id"`
-	Type           string            `json:"type"`
+	Type           ResourceType      `json:"type"`
 	AdditionalData map[string]string `json:"additional_data"`
 	Metrics        []MetricBlob      `json:"metrics"`
 	Resource       Resource
