@@ -17,6 +17,9 @@ var ddbTableMetricsToGet = map[string][]string{
 		"ProvisionedWriteCapacityUnits",
 
 		"TimeToLiveDeletedItemCount",
+
+		"TransactionConflict",
+		"ConditionalCheckFailedRequests",
 	},
 }
 var ddbGSIMetricsToGet = map[string][]string{
@@ -138,6 +141,8 @@ func (ddb *DynamoDb) GetAll() ([]*ResourceSummary, error) {
 			tableMetadata["p_throughput_read_units"] = strconv.FormatInt(*throughputSum.ReadCapacityUnits, 10)
 			tableMetadata["p_throughput_decreases_day"] = strconv.FormatInt(*throughputSum.NumberOfDecreasesToday, 10)
 		}
+
+		tableMetadata["lsi_count"] = strconv.Itoa(len(dRsp.Table.LocalSecondaryIndexes))
 
 		// Calc  GSI Metrics
 		tableMetadata["gsi_count"] = strconv.Itoa(len(dRsp.Table.GlobalSecondaryIndexes))
