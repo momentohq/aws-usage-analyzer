@@ -122,6 +122,11 @@ func (ddb *DynamoDb) GetAll() ([]*ResourceSummary, error) {
 			avg_item_size = *dRsp.Table.TableSizeBytes / *dRsp.Table.ItemCount
 		}
 
+		tableClass := ddbTypes.TableClassStandard
+		if dRsp.Table.TableClassSummary != nil {
+			tableClass = dRsp.Table.TableClassSummary.TableClass
+		}
+
 		billingMode := ddbTypes.BillingModeProvisioned
 		if dRsp.Table.BillingModeSummary != nil {
 			billingMode = dRsp.Table.BillingModeSummary.BillingMode
@@ -133,6 +138,7 @@ func (ddb *DynamoDb) GetAll() ([]*ResourceSummary, error) {
 			"table_size_bytes":    strconv.FormatInt(*dRsp.Table.TableSizeBytes, 10),
 			"avg_item_size_bytes": strconv.FormatInt(avg_item_size, 10),
 			"billing_mode":        string(billingMode),
+			"table_class":         string(tableClass),
 		}
 
 		if dRsp.Table.ProvisionedThroughput != nil {
