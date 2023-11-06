@@ -60,7 +60,7 @@ func (c *ResourceMetricFetcher) fetchMetricsForResource(
 					Period: aws.Int32(60 * 60 * 24), // 1 day interval
 					Stat:   aws.String(statType),
 				},
-				Id: aws.String(strings.ToLower(metric)),
+				Id: aws.String(strings.ToLower(metric) + "_" + strings.ToLower(statType)),
 			})
 		}
 		startTime := aws.Time(time.Now().Add(time.Duration(-30) * 24 * time.Hour)) // 30 Days ago
