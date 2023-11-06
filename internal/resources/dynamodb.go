@@ -16,10 +16,22 @@ var ddbTableMetricsToGet = map[string][]string{
 		"ProvisionedReadCapacityUnits",
 		"ProvisionedWriteCapacityUnits",
 
+		"ReadThrottleEvents",
+		"WriteThrottleEvents",
+
 		"TimeToLiveDeletedItemCount",
 
 		"TransactionConflict",
 		"ConditionalCheckFailedRequests",
+	},
+	"Maximum": {
+		"ConsumedReadCapacityUnits",
+		"ConsumedWriteCapacityUnits",
+		"ProvisionedReadCapacityUnits",
+		"ProvisionedWriteCapacityUnits",
+
+		"ReadThrottleEvents",
+		"WriteThrottleEvents",
 	},
 }
 var ddbGSIMetricsToGet = map[string][]string{
@@ -28,6 +40,18 @@ var ddbGSIMetricsToGet = map[string][]string{
 		"ConsumedWriteCapacityUnits",
 		"ProvisionedReadCapacityUnits",
 		"ProvisionedWriteCapacityUnits",
+
+		"ReadThrottleEvents",
+		"WriteThrottleEvents",
+	},
+	"Maximum": {
+		"ConsumedReadCapacityUnits",
+		"ConsumedWriteCapacityUnits",
+		"ProvisionedReadCapacityUnits",
+		"ProvisionedWriteCapacityUnits",
+
+		"ReadThrottleEvents",
+		"WriteThrottleEvents",
 	},
 }
 
