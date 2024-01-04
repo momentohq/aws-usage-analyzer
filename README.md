@@ -1,7 +1,7 @@
 # aws-usage-analyzer
 
 The aws-usage-analyzer script will fetch information about your Elasticache clusters and DynamoDB Tables to help find 
-oppurtunities for optomizations with Momento.
+opportunities for optimizations with Momento.
 
 ![Usage Diagram](./docs/imgs/AWS-Usage-Analyzer.png)
 
