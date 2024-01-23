@@ -38,9 +38,10 @@ func main() {
 	}
 
 	h := &handlers.Handler{
-		Cw:  cloudwatch.NewFromConfig(cfg),
-		Ec:  elasticache.NewFromConfig(cfg),
-		DDB: dynamodb.NewFromConfig(cfg),
+		Cw:     cloudwatch.NewFromConfig(cfg),
+		Ec:     elasticache.NewFromConfig(cfg),
+		DDB:    dynamodb.NewFromConfig(cfg),
+		Region: cfg.Region,
 	}
 	err = h.Handle()
 	if err != nil {

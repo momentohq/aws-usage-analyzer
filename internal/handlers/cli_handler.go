@@ -16,9 +16,10 @@ import (
 )
 
 type Handler struct {
-	Cw  *cloudwatch.Client
-	Ec  *elasticache.Client
-	DDB *dynamodb.Client
+	Cw     *cloudwatch.Client
+	Ec     *elasticache.Client
+	DDB    *dynamodb.Client
+	Region string
 }
 
 func (h *Handler) Handle() error {
@@ -56,7 +57,7 @@ func (h *Handler) Handle() error {
 	metricFetcher := metrics.ResourceMetricFetcher{CW: h.Cw}
 	metricFetcher.GetMetricsForResources(resourcesToFetchMetricsOn)
 	// Write out resource data to csv
-	err = writeOutResults(resourcesToFetchMetricsOn)
+	err = h.writeOutResults(resourcesToFetchMetricsOn)
 	if err != nil {
 		return err
 	}
@@ -67,7 +68,7 @@ func (h *Handler) Handle() error {
 	return nil
 }
 
-func writeOutResults(results []*resources.ResourceSummary) error {
+func (h *Handler) writeOutResults(results []*resources.ResourceSummary) error {
 	f, err := os.Create("./results.csv")
 	if err != nil {
 		return err
@@ -76,10 +77,10 @@ func writeOutResults(results []*resources.ResourceSummary) error {
 	writer := csv.NewWriter(f)
 
 	data := [][]string{
-		{"ResourceId", "Type", "AdditionalData", "Metrics"},
+		{"ResourceId", "Type", "Region", "AdditionalData", "Metrics"},
 	}
 	for _, r := range results {
-		metrics, err := json.Marshal(r.Metrics)
+		marshaledMetrics, err := json.Marshal(r.Metrics)
 		if err != nil {
 			return err
 		}
@@ -90,8 +91,9 @@ func writeOutResults(results []*resources.ResourceSummary) error {
 		data = append(data, []string{
 			r.ID,
 			string(r.Type),
+			h.Region,
 			string(additionalData),
-			string(metrics),
+			string(marshaledMetrics),
 		})
 	}
 
